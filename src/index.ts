@@ -7,3 +7,4 @@ export * from './adapters/index.js';
 export * from './strategies/index.js';
 export * from './proposer/index.js';
 export * from './types/index.js';
+export * from './executors/index.js';

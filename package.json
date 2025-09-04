@@ -42,7 +42,10 @@
     "example:dspy": "tsx examples/train-dspy.ts",
     "example:aime": "tsx examples/train-aime.ts",
     "example:terminal": "tsx examples/train-terminal-bench.ts",
+    "example:axllm": "tsx examples/axllm-real-ai-example.ts",
+    "demo:axllm": "tsx scripts/demo-axllm-gepa.ts",
     "test:real": "vitest test/real-validation.test.ts --reporter=verbose",
+    "test:axllm-real": "REAL_AI_TESTS=true vitest test/axllm-real-ai-integration.test.ts --reporter=verbose",
     "validate": "tsx validate-optimization.ts",
     "cli": "tsx src/cli/gepa-cli.ts"
   },
@@ -100,7 +103,12 @@
   "files": [
     "dist",
     "src",
+    "examples",
+    "docs",
+    "scripts",
     "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE"
   ]
 }

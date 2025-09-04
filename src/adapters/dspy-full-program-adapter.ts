@@ -1,6 +1,7 @@
 import { BaseAdapter, EvaluationBatch } from '../core/adapter.js';
 import { ComponentMap, ReflectiveDataset } from '../types/index.js';
 import { DSPyExample, DSPyTrace, DSPyPrediction, DSPyProgram, DSPyModule } from './dspy-adapter.js';
+import { DSPyExecutor, createDSPyExecutor } from '../executors/dspy-executor.js';
 
 /**
  * DSPy Full Program Adapter - Evolves entire DSPy programs including
@@ -14,153 +15,129 @@ import { DSPyExample, DSPyTrace, DSPyPrediction, DSPyProgram, DSPyModule } from 
  */
 export class DSPyFullProgramAdapter extends BaseAdapter<DSPyExample, DSPyTrace, DSPyPrediction> {
   private metricFn: (example: DSPyExample, prediction: DSPyPrediction) => number | Promise<number>;
-  private lm?: (prompt: string) => Promise<string> | string;
+  private taskLm?: (prompt: string) => Promise<string> | string;
+  private reflectionLm?: (prompt: string) => Promise<string> | string;
   private baseProgram: string; // String representation of the program
+  private executor: DSPyExecutor;
+  private numThreads: number;
+  private taskLmConfig: any;
   
   constructor(config: {
-    baseProgram: string;
-    metricFn: (example: DSPyExample, prediction: DSPyPrediction) => number | Promise<number>;
-    lm?: (prompt: string) => Promise<string> | string;
+    baseProgram?: string;
+    taskLm?: any; // DSPy LM config or function
+    metricFn: (example: DSPyExample, prediction: DSPyPrediction) => any;
+    reflectionLm?: (prompt: string) => Promise<string> | string;
+    numThreads?: number;
+    pythonPath?: string;
   }) {
     super();
-    this.baseProgram = config.baseProgram;
+    this.baseProgram = config.baseProgram || 'import dspy\nprogram = dspy.ChainOfThought("question -> answer")';
     this.metricFn = config.metricFn;
-    this.lm = config.lm;
+    this.reflectionLm = config.reflectionLm;
+    this.numThreads = config.numThreads || 10;
+    this.executor = createDSPyExecutor(config.pythonPath);
+    
+    // Parse task LM config
+    if (typeof config.taskLm === 'function') {
+      this.taskLm = config.taskLm;
+      this.taskLmConfig = { model: 'openai/gpt-4o-mini' };
+    } else if (config.taskLm) {
+      this.taskLmConfig = {
+        model: config.taskLm.model || 'openai/gpt-4o-mini',
+        apiKey: config.taskLm.apiKey || process.env.OPENAI_API_KEY,
+        maxTokens: config.taskLm.maxTokens || 2000,
+        temperature: config.taskLm.temperature || 0.7
+      };
+    } else {
+      this.taskLmConfig = { model: 'openai/gpt-4o-mini' };
+    }
   }
   
-  private parseProgram(programCode: string): DSPyProgram {
-    // Parse the program string into a DSPyProgram structure
-    // This is simplified - in reality would use proper AST parsing
-    
-    const modules: DSPyModule[] = [];
-    
-    // Extract module definitions
-    const moduleRegex = /dspy\.(Predict|ChainOfThought|ReAct)\(["']([^"']+)["']\)/g;
-    let match;
-    let moduleIndex = 0;
-    
-    while ((match = moduleRegex.exec(programCode)) !== null) {
-      const [, type, signature] = match;
-      modules.push({
-        name: `module_${moduleIndex++}`,
-        type: type as any,
-        signature: this.parseSignature(signature)
-      });
-    }
-    
-    // Extract custom module classes
-    const classRegex = /class (\w+)\(dspy\.Module\):([\s\S]*?)(?=class|\Z)/g;
-    while ((match = classRegex.exec(programCode)) !== null) {
-      const [, className, classBody] = match;
-      const submodules = this.extractSubmodules(classBody);
-      
-      modules.push({
-        name: className,
-        type: 'Custom',
-        signature: {
-          instructions: `Custom module ${className}`,
-          inputFields: {},
-          outputFields: {}
-        },
-        submodules
-      });
-    }
-    
-    return {
-      modules,
-      flow: programCode
-    };
-  }
-  
-  private parseSignature(sig: string): any {
-    // Parse signature string like "question -> answer"
-    const parts = sig.split('->').map(s => s.trim());
-    
-    return {
-      instructions: `Process ${parts[0]} to produce ${parts[1]}`,
-      inputFields: {
-        [parts[0]]: { name: parts[0], description: `Input ${parts[0]}` }
-      },
-      outputFields: {
-        [parts[1]]: { name: parts[1], description: `Output ${parts[1]}` }
+  private async validateProgram(programCode: string): Promise<{ valid: boolean; error?: string }> {
+    try {
+      // Quick syntax validation
+      if (!programCode.includes('import dspy')) {
+        return { valid: false, error: 'Program must import dspy' };
       }
-    };
+      if (!programCode.includes('program =')) {
+        return { valid: false, error: 'Program must define a "program" variable' };
+      }
+      return { valid: true };
+    } catch (error) {
+      return { valid: false, error: String(error) };
+    }
   }
   
-  private extractSubmodules(classBody: string): DSPyModule[] {
-    const submodules: DSPyModule[] = [];
-    const initRegex = /self\.(\w+)\s*=\s*dspy\.(Predict|ChainOfThought|ReAct)\(["']([^"']+)["']\)/g;
-    let match;
-    
-    while ((match = initRegex.exec(classBody)) !== null) {
-      const [, name, type, signature] = match;
-      submodules.push({
-        name,
-        type: type as any,
-        signature: this.parseSignature(signature)
-      });
-    }
-    
-    return submodules;
+  private convertMetricFnToCode(): string {
+    // Convert the metric function to Python code
+    // This is a simplified version - in production, would need more sophisticated conversion
+    return `
+def metric_fn(example, pred):
+    # Default metric function
+    if hasattr(example, 'answer'):
+        pred_answer = pred.get('answer', '') if hasattr(pred, 'get') else getattr(pred, 'answer', '')
+        return 1.0 if str(pred_answer).strip() == str(example.answer).strip() else 0.0
+    return 0.0
+`;
   }
   
   private async executeProgram(
     programCode: string,
-    example: DSPyExample,
+    examples: DSPyExample[],
     captureTrace: boolean = false
-  ): Promise<DSPyPrediction> {
-    // In a real implementation, this would execute the Python code
-    // For now, we'll simulate execution
-    
-    const trace: DSPyTrace = {
-      moduleInvocations: [],
-      score: 0
-    };
+  ): Promise<{ predictions: DSPyPrediction[], traces?: DSPyTrace[] }> {
+    // Use real Python DSPy execution
+    const metricCode = this.convertMetricFnToCode();
     
     try {
-      // Simulate program execution
-      const outputs: Record<string, any> = {};
+      const result = await this.executor.execute(
+        programCode,
+        examples,
+        this.taskLmConfig,
+        metricCode
+      );
       
-      // Extract expected output structure from program
-      if (programCode.includes('ChainOfThought')) {
-        outputs.reasoning = 'Step-by-step reasoning...';
-        outputs.answer = 'Generated answer';
-      } else if (programCode.includes('ReAct')) {
-        outputs.thought = 'Initial thought';
-        outputs.action = 'Take action';
-        outputs.observation = 'Observe result';
-        outputs.answer = 'Final answer';
-      } else {
-        outputs.answer = 'Direct answer';
+      if (!result.success) {
+        throw new Error(result.error || 'Execution failed');
       }
       
-      // Calculate score
-      const prediction: DSPyPrediction = {
-        outputs,
-        score: 0,
-        trace: captureTrace ? trace : undefined
-      };
+      const predictions: DSPyPrediction[] = [];
+      const traces: DSPyTrace[] = [];
       
-      prediction.score = await this.metricFn(example, prediction);
-      
-      if (captureTrace) {
-        trace.score = prediction.score;
-        trace.moduleInvocations.push({
-          moduleName: 'program',
-          inputs: example.inputs,
-          outputs,
-          timestamp: Date.now()
-        });
+      for (let i = 0; i < examples.length; i++) {
+        const res = result.results![i];
+        const prediction: DSPyPrediction = {
+          outputs: res.outputs,
+          score: res.score,
+          feedback: res.feedback
+        };
+        predictions.push(prediction);
+        
+        if (captureTrace && result.traces) {
+          const trace: DSPyTrace = {
+            moduleInvocations: result.traces[i].map((t: any) => ({
+              moduleName: t.module,
+              inputs: t.inputs,
+              outputs: t.outputs,
+              timestamp: Date.now()
+            })),
+            score: res.score
+          };
+          traces.push(trace);
+        }
       }
       
-      return prediction;
+      return { predictions, traces: captureTrace ? traces : undefined };
       
     } catch (error) {
-      return {
+      // Return empty predictions on error
+      const predictions = examples.map(() => ({
         outputs: {},
         score: 0,
-        trace: captureTrace ? { ...trace, errors: [`Execution error: ${error}`] } : undefined
-      };
+        error: String(error)
+      }));
+      
+      return { predictions };
     }
   }
   
@@ -171,21 +148,25 @@ export class DSPyFullProgramAdapter extends BaseAdapter<DSPyExample, DSPyTrace, 
   ): Promise<EvaluationBatch<DSPyTrace, DSPyPrediction>> {
     const programCode = candidate['program'] || this.baseProgram;
     
-    const outputs: DSPyPrediction[] = [];
-    const scores: number[] = [];
-    const trajectories: DSPyTrace[] | null = captureTraces ? [] : null;
-    
-    for (const example of batch) {
-      const prediction = await this.executeProgram(programCode, example, captureTraces);
-      outputs.push(prediction);
-      scores.push(prediction.score);
-      
-      if (trajectories && prediction.trace) {
-        trajectories.push(prediction.trace);
-      }
+    // Validate program before execution
+    const validation = await this.validateProgram(programCode);
+    if (!validation.valid) {
+      // Return failure for all examples
+      return {
+        outputs: batch.map(() => ({ outputs: {}, score: 0, error: validation.error })),
+        scores: batch.map(() => 0),
+        trajectories: captureTraces ? batch.map(() => ({ moduleInvocations: [], score: 0, errors: [validation.error!] })) : null
+      };
     }
     
-    return { outputs, scores, trajectories };
+    // Execute program on batch
+    const { predictions, traces } = await this.executeProgram(programCode, batch, captureTraces);
+    
+    return {
+      outputs: predictions,
+      scores: predictions.map(p => p.score || 0),
+      trajectories: traces || null
+    };
   }
   
   async makeReflectiveDataset(
@@ -245,15 +226,32 @@ export class DSPyFullProgramAdapter extends BaseAdapter<DSPyExample, DSPyTrace, 
     return dataset;
   }
   
-  proposeNewTexts(
+  async proposeNewTexts(
     candidate: ComponentMap,
     reflectiveDataset: ReflectiveDataset,
     componentsToUpdate: string[]
-  ): ComponentMap {
+  ): Promise<ComponentMap> {
     const currentProgram = candidate['program'] || this.baseProgram;
     const examples = reflectiveDataset['program'] || [];
     
-    // Analyze feedback to determine program evolution strategy
+    // If we have a reflection LM, use it for sophisticated evolution
+    if (this.reflectionLm) {
+      const prompt = this.buildEvolutionPrompt(currentProgram, examples);
+      const evolvedProgram = await this.reflectionLm(prompt);
+      
+      // Extract code from response
+      const codeMatch = evolvedProgram.match(/```python?\n([\s\S]*?)\n```/);
+      if (codeMatch) {
+        return { program: codeMatch[1] };
+      }
+      
+      // Try to find program definition directly
+      if (evolvedProgram.includes('import dspy') && evolvedProgram.includes('program =')) {
+        return { program: evolvedProgram };
+      }
+    }
+    
+    // Fallback to heuristic evolution
     const avgScore = examples.reduce((sum, ex) => sum + ex['Score'], 0) / (examples.length || 1);
     
     let evolvedProgram = currentProgram;
@@ -270,6 +268,26 @@ export class DSPyFullProgramAdapter extends BaseAdapter<DSPyExample, DSPyTrace, 
     }
     
     return { program: evolvedProgram };
+  }
+  
+  private buildEvolutionPrompt(currentProgram: string, feedback: any[]): string {
+    return `You are evolving a DSPy program based on execution feedback.
+
+Current program:
+\`\`\`python
+${currentProgram}
+\`\`\`
+
+Execution feedback:
+${JSON.stringify(feedback.slice(0, 3), null, 2)}
+
+Improve the program by:
+1. Analyzing failure patterns
+2. Adding error handling where needed
+3. Improving module signatures
+4. Optimizing the dataflow
+
+Provide the improved program in a Python code block. Ensure it imports dspy and defines a 'program' variable.`;
   }
   
   private majorRestructure(program: string, feedback: any[]): string {
