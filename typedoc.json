@@ -1,0 +1,32 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["./src/index.ts"],
+  "out": "docs/api",
+  "name": "GEPA-TS API Documentation",
+  "navigationLinks": {
+    "GitHub": "https://github.com/yourusername/gepa-ts",
+    "NPM": "https://www.npmjs.com/package/gepa-ts"
+  },
+  "includeVersion": true,
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "excludeExternals": true,
+  "excludeInternal": true,
+  "categorizeByGroup": true,
+  "searchInComments": true,
+  "plugin": [],
+  "theme": "default",
+  "readme": "README.md",
+  "gitRevision": "main",
+  "hideGenerator": false,
+  "sort": ["source-order"],
+  "kindSortOrder": [
+    "Class",
+    "Interface",
+    "TypeAlias",
+    "Enum",
+    "Function",
+    "Variable",
+    "Module"
+  ]
+}

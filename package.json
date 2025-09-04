@@ -1,0 +1,106 @@
+{
+  "name": "gepa-ts",
+  "version": "1.0.0",
+  "description": "TypeScript implementation of GEPA (Gradient-free Evolution of Prompts and Agents) - Complete port with 100% feature parity",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
+      "import": "./dist/adapters/index.js"
+    },
+    "./proposers": {
+      "types": "./dist/proposer/index.d.ts",
+      "import": "./dist/proposer/index.js"
+    },
+    "./datasets": {
+      "types": "./dist/datasets/index.d.ts",
+      "import": "./dist/datasets/index.js"
+    },
+    "./integrations": {
+      "types": "./dist/integrations/index.d.ts",
+      "import": "./dist/integrations/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:record": "GEPA_TEST_MODE=record vitest",
+    "test:replay": "GEPA_TEST_MODE=replay vitest",
+    "lint": "eslint src test --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "benchmark": "tsx benchmarks/performance.ts",
+    "example:basic": "tsx examples/basic-usage.ts",
+    "example:dspy": "tsx examples/train-dspy.ts",
+    "example:aime": "tsx examples/train-aime.ts",
+    "example:terminal": "tsx examples/train-terminal-bench.ts",
+    "test:real": "vitest test/real-validation.test.ts --reporter=verbose",
+    "validate": "tsx validate-optimization.ts",
+    "cli": "tsx src/cli/gepa-cli.ts"
+  },
+  "keywords": [
+    "optimization",
+    "llm",
+    "prompt-engineering",
+    "evolutionary-algorithm",
+    "pareto",
+    "gepa",
+    "genetic-algorithm",
+    "dspy",
+    "prompt-optimization",
+    "text-evolution",
+    "multi-objective",
+    "aime",
+    "terminal-bench"
+  ],
+  "author": "GEPA Contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/gepa-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/gepa-ts/issues"
+  },
+  "homepage": "https://github.com/yourusername/gepa-ts#readme",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "@vitest/coverage-v8": "^1.2.1",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.4",
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.1"
+  },
+  "dependencies": {
+    "@ax-llm/ax": "^14.0.20",
+    "commander": "^14.0.0",
+    "dotenv": "^16.3.1",
+    "openai": "^4.52.0",
+    "zod": "^3.22.4"
+  },
+  "optionalDependencies": {
+    "anthropic": "^0.15.0",
+    "wandb-js": "^0.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ]
+}
